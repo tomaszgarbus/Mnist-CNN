@@ -6,7 +6,7 @@ import numpy as np
 
 # TODO:
 # * achieve accuracy 99.1%
-# * add batch normalization
+# * add batch normalization (DONE)
 # * find 10 patches that excite the network the most
 
 
@@ -77,9 +77,11 @@ class MnistTrainer:
                                            dtype=[tf.int32, tf.int32, tf.int32])
                 def safe_cut_patch(a):
                     sample_no, x, y = a
+                    pad_marg_x = (self.kernel_size[0] // 2) + 1 - (self.kernel_size[0] % 2)
+                    pad_marg_y = (self.kernel_size[1] // 2) + 1 - (self.kernel_size[1] % 2)
                     padding = [[0, 0],
-                               [0, self.kernel_size[0]],
-                               [0, self.kernel_size[1]],
+                               [pad_marg_x, pad_marg_x],
+                               [pad_marg_y, pad_marg_y],
                                [0, 0]]
                     padded = tf.pad(signal, padding)
                     return padded[sample_no, x:x+self.kernel_size[0], y:y+self.kernel_size[1], :]
@@ -157,12 +159,14 @@ class MnistTrainer:
         print('list of variables', list(map(lambda x: x.name, tf.global_variables())))
 
     def train_on_batch(self, batch_x, batch_y, global_step) -> List:
-        results = self.sess.run([self.loss, self.accuracy, self.train_op], #self.merged_summary,
-                                feed_dict={self.x: batch_x, self.y: batch_y})
-        # Update summary every 100 steps.
-        if global_step % 100 == 0:
-           writer = tf.summary.FileWriter(logdir='summary')
-           writer.add_summary(results[2], global_step=global_step)
+        # Update summary every 1000 steps.
+        if global_step % 1000 == 0:
+            results = self.sess.run([self.loss, self.accuracy, self.merged_summary, self.train_op],
+                                    feed_dict={self.x: batch_x, self.y: batch_y})
+            self.writer.add_summary(results[2], global_step=global_step)
+        else:
+            results = self.sess.run([self.loss, self.accuracy, self.train_op],
+                                    feed_dict={self.x: batch_x, self.y: batch_y})
         return results[:2]
 
     def test_on_batch(self, batch_x, batch_y) -> List:
@@ -177,7 +181,7 @@ class MnistTrainer:
         x_test, y_test = self.mnist.test.images, self.mnist.test.labels
         N = self.mnist.test.num_examples
         results = np.array([0., 0.])
-        for batch_no in range(N // self.mb_size):
+        for batch_no in range(1 + N // self.mb_size):
             beg = batch_no * self.mb_size
             end = min(N, (batch_no + 1) * self.mb_size)
             len_batch = end - beg
@@ -189,8 +193,8 @@ class MnistTrainer:
     def train(self) -> None:
         with tf.Session() as self.sess:
             # Set mini-batch size and epochs number
-            self.mb_size = 512
-            nb_epochs = 50000
+            self.mb_size = 69
+            nb_epochs = 100000
             self.learning_rate = 0.2
 
             # Initialize computation graph
@@ -199,11 +203,13 @@ class MnistTrainer:
             # Initialize variables
             tf.global_variables_initializer().run()
 
+            self.writer = tf.summary.FileWriter(logdir='summary')
+
             for epoch_no in range(nb_epochs):
                 batch_x, batch_y = self.mnist.train.next_batch(self.mb_size)
                 results = self.train_on_batch(batch_x, batch_y, global_step=epoch_no)
                 # Learning rate decay
-                if epoch_no % 3000 == 0:
+                if epoch_no % 10000 == 0:
                     self.test_on_all()
                     self.learning_rate /= 2
                 if epoch_no % 100 == 0:
@@ -218,7 +224,7 @@ class MnistTrainer:
 if __name__ == '__main__':
     trainer = MnistTrainer(
         num_conv_layers = 2,
-        dense_layers = [64, 64, 128] + [10],
+        dense_layers = [128] + [10],
         kernel_size=[5, 5],
         filters=10
     )
