@@ -3,16 +3,16 @@ from tensorflow.examples.tutorials.mnist import input_data
 from math import sqrt
 from typing import Iterable, List
 import numpy as np
+import logging
 
 # TODO:
 # * achieve accuracy 99.1%
 # * add batch normalization (DONE)
 # * find 10 patches that excite the network the most
 
-
 class MnistTrainer:
     def __init__(self,
-                 num_conv_layers: int = 1,
+                 num_conv_layers: int = 2,
                  dense_layers: Iterable[int] = [64, 64, 10],
                  kernel_size: [int, int] = [5, 5],
                  num_filters: int = 10) -> None:
@@ -21,8 +21,22 @@ class MnistTrainer:
         self.kernel_size = kernel_size
         self.num_filters = num_filters
         self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
-        self.mb_size = 200
+        self.mb_size = 50
         self.learning_rate = 0.2
+
+        # Initialize logging.
+        self.logger = logging.Logger("main_logger", level=logging.INFO)
+        log_file = 'log.txt'
+        formatter = logging.Formatter(
+            fmt='{levelname:<7} {message}',
+            style='{'
+        )
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(console_handler)
+        self.logger.addHandler(file_handler)
 
     def create_model(self) -> None:
         self.x = tf.placeholder(tf.float32, [self.mb_size, 784], name='x')
@@ -72,7 +86,9 @@ class MnistTrainer:
 
             # Find exciting patches
             for filter_no in range(self.num_filters):
-                inp = 28 // (2**layer_no)
+                inp = 28 // (2**layer_no)  # Square root of input shape for current layer.
+
+                # Find top 10 responses to current filter, in the current mini-batch.
                 single_filtered_flattened = tf.reshape(cur_conv_layer[:, :, :, filter_no], [self.mb_size * inp * inp])
                 top10_vals, top10_indices = tf.nn.top_k(single_filtered_flattened,
                                                         k=10,
@@ -81,6 +97,7 @@ class MnistTrainer:
                                            top10_indices,
                                            dtype=[tf.int32, tf.int32, tf.int32])
 
+                # Find patches corresponding to the top 10 responses.
                 def safe_cut_patch(a):
                     """
                     :param (sample_no, x, y)@a
@@ -96,20 +113,31 @@ class MnistTrainer:
                                [0, 0]]
                     padded = tf.pad(signal, padding)
                     return padded[sample_no, x:x+self.kernel_size[0], y:y+self.kernel_size[1], :]
+
+                # Store patches and responses in class-visible array to be retrieved later.
                 self.exciting_patches[layer_no][filter_no] = tf.map_fn(safe_cut_patch,
                                                                        top10_reshaped,
                                                                        dtype=tf.float32)
                 self.patches_responses[layer_no][filter_no] = top10_vals
+
+                # Flatten and concatenate the 10 patches to 2 dimensions for visualization.
                 if layer_no == 0:
-                    new_shape = [1] + [self.kernel_size[0], 10 * self.kernel_size[1]] + [1]
+                    flattened_patches_shape = [1] +\
+                                              [self.kernel_size[0],
+                                               10 * self.kernel_size[1]] +\
+                                              [1]
                 else:
-                    new_shape = [1] + [self.num_filters * self.kernel_size[0], 10 * self.kernel_size[1]] + [1]
+                    flattened_patches_shape = [1] +\
+                                              [self.num_filters * self.kernel_size[0],
+                                               10 * self.kernel_size[1]] +\
+                                              [1]
+                # Write patches to summary.
                 patch_name = "exciting_patches_{0}_{1}".format(layer_no, filter_no)
-                self.exciting_patches[layer_no][filter_no] = tf.reshape(self.exciting_patches[layer_no][filter_no],
-                                                                        new_shape,
+                flattened_exciting_patches = tf.reshape(self.exciting_patches[layer_no][filter_no],
+                                                                        flattened_patches_shape,
                                                                         name=patch_name)
                 tf.summary.image(patch_name,
-                                 self.exciting_patches[layer_no][filter_no])
+                                 flattened_exciting_patches)
 
             # Set pooled image as new signal
             signal = cur_pool
@@ -128,7 +156,9 @@ class MnistTrainer:
                     kernel = tf.reshape(kernel, [1] + self.kernel_size + [1])
                     applied = tf.reshape(cur_conv_layer[0, :, :, i], [1, inp, inp, 1])
                 else:
-                    kernel = tf.reshape(kernel, [1] + [self.kernel_size[0], self.kernel_size[1] * self.num_filters] + [1])
+                    kernel = tf.reshape(kernel, [1] +\
+                                                [self.kernel_size[0], self.kernel_size[1] * self.num_filters] +\
+                                                [1])
                     applied = tf.reshape(cur_conv_layer[0, :, :, i], [1, inp, inp, 1])
                 tf.summary.image('conv{0}_filter{1}_kernel'.format(layer_no, i),
                                  kernel,
@@ -137,7 +167,7 @@ class MnistTrainer:
                                  applied,
                                  max_outputs=3)
 
-        # Flatten for the use in dense layers
+        # Flatten the signal for the use in dense layers
         if self.num_conv_layers > 0:
             signal = tf.reshape(signal, [self.mb_size, self.num_filters * (28 // (2 ** self.num_conv_layers)) ** 2])
         else:
@@ -171,11 +201,13 @@ class MnistTrainer:
 
         # Use some optimizer from tf.
         self.train_op = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
-        #self.train_op = tf.train.MomentumOptimizer(self.learning_rate, momentum=0.9).minimize(self.loss)
 
-        print('list of variables', list(map(lambda x: x.name, tf.global_variables())))
+        self.logger.info('list of variables {0}'.format(list(map(lambda x: x.name, tf.global_variables()))))
 
     def train_on_batch(self, batch_x, batch_y, global_step) -> List:
+        """
+        :return: [loss, accuracy]
+        """
         # Update summary every 1000 steps.
         if global_step % 1000 == 0:
             results = self.sess.run([self.loss,
@@ -190,8 +222,13 @@ class MnistTrainer:
         return results[:2]
 
     def test_on_batch(self, batch_x, batch_y) -> List:
-        # Note that this function does not fetch |self.train_op|, so that the weights
-        # are not updated.
+        """
+        Note that this function does not fetch |self.train_op|, so that the weights
+        are not updated.
+        :param batch_x:
+        :param batch_y:
+        :return: [loss, accuracy]
+        """
         results = self.sess.run([self.loss, self.accuracy, self.exciting_patches],
                                 feed_dict={self.x: batch_x, self.y: batch_y})
         return results[:2]
@@ -213,13 +250,14 @@ class MnistTrainer:
             batch_results = np.array(self.test_on_batch(x_test[beg:end], y_test[beg:end]))
             results += batch_results * len_batch
         results /= N
-        print("(Test(final):   Loss: {0[0]}, accuracy: {0[1]}".format(results))
+        self.logger.info("(Test(final):   Loss: {0[0]}, accuracy: {0[1]}".format(results))
 
     def find_exciting_patches(self) -> np.ndarray:
         """
         :return: np array of shape (self.num_conv_layers, self.filters, 10), containing,
             for each filter of each convolutional layer, 10 most exciting patches among
             all training images.
+        TODO: store in a variable and write to summary
         """
         x_train, y_train = self.mnist.train.images, self.mnist.train.labels
         N = self.mnist.train.num_examples
@@ -227,11 +265,15 @@ class MnistTrainer:
             "Sorry, mb_size must divide the number of images in train set"
         top10 = [[[] for _ in range(self.num_filters)] for _ in range(self.num_conv_layers)]
         for batch_no in range(N // self.mb_size):
+            self.logger.debug(batch_no, "/", N // self.mb_size)
+            # Run model on single batch. Do not fetch self.train_op.
             beg = batch_no * self.mb_size
             end = min(N, (batch_no + 1) * self.mb_size)
             batch_x, batch_y = x_train[beg:end], y_train[beg:end]
             results = self.sess.run([self.patches_responses, self.exciting_patches],
                                     feed_dict={self.x: batch_x, self.y: batch_y})
+            # For each layer and filter, update the current top 10 exciting patches,
+            # comparing them with patches found in last mini batch.
             for layer_no in range(self.num_conv_layers):
                 for filter_no in range(self.num_filters):
                     results[0][layer_no][filter_no] = results[0][layer_no][filter_no].reshape(10).tolist()
@@ -239,11 +281,21 @@ class MnistTrainer:
                     top10[layer_no][filter_no] += tmp
                     top10[layer_no][filter_no].sort(key=lambda a: a[0], reverse=True)
                     top10[layer_no][filter_no] = top10[layer_no][filter_no][:10]
-        for layer_no in range(N // self.num_conv_layers):
-            for filter_no in range(N // self.num_filters):
-                top10[layer_no][filter_no] = top10[layer_no][filter_no][1]
 
-        return np.array(top10)
+        # Drop responses for exciting patches.
+        for layer_no in range(self.num_conv_layers):
+            for filter_no in range(self.num_filters):
+                for k in range(10):
+                    top10[layer_no][filter_no][k] = top10[layer_no][filter_no][k][1]
+
+        for layer_no in range(self.num_conv_layers):
+            for filter_no in range(self.num_filters):
+                self.logger.debug(top10[layer_no][filter_no])
+                tf.Variable(top10[layer_no][filter_no],
+                            validate_shape=False,
+                            name="top10_exciting_patches_layer{0}_filter{1}".format(layer_no, filter_no))
+
+        return top10
 
     def train(self) -> None:
         """
@@ -251,7 +303,7 @@ class MnistTrainer:
         """
         with tf.Session() as self.sess:
             # Set number of epochs.
-            nb_epochs = 10000
+            nb_epochs = 1000
 
             # Initialize computation graph.
             self.create_model()
@@ -268,17 +320,19 @@ class MnistTrainer:
                 results = self.train_on_batch(batch_x, batch_y, global_step=epoch_no)
 
                 if epoch_no % 10000 == 0:
+                    # Test on all samples.
                     self.test_on_all()
                     # Perform learning rate decay.
                     self.learning_rate /= 2
                 if epoch_no % 100 == 0:
-                    print("Epoch {0}: Loss: {1[0]}, accuracy: {1[1]}".format(epoch_no, results))
+                    self.logger.info("Epoch {0}: Loss: {1[0]}, accuracy: {1[1]}".format(epoch_no, results))
                     batch_x_t, batch_y_t = self.mnist.test.next_batch(self.mb_size)
                     test_results = self.test_on_batch(batch_x_t, batch_y_t)
-                    print("(Test(batch):   Loss: {0[0]}, accuracy: {0[1]}".format(test_results))
-            self.find_exciting_patches()
+                    self.logger.info("(Test(batch):   Loss: {0[0]}, accuracy: {0[1]}".format(test_results))
+            #self.find_exciting_patches()
             self.test_on_all()
 
+            # Save the trained model with all valuable variables.
             saver = tf.train.Saver()
             saver.save(sess=self.sess, save_path='./saved_model', global_step=epoch_no)
 
