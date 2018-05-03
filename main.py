@@ -8,7 +8,7 @@ import logging
 # TODO:
 # * achieve accuracy 99.1%
 # * add batch normalization (DONE)
-# * find 10 patches that excite the network the most
+# * find 10 patches that excite the network the most (DONE)
 
 
 class MnistTrainer:
@@ -20,7 +20,7 @@ class MnistTrainer:
                  learning_rate: int = 0.2,
                  lr_decay_time: int = 10000,
                  mb_size: int = 100,
-                 dropout_rate: float = 0.3) -> None:
+                 dropout_rate: float = 0.4) -> None:
         # Number of filters in each convolutional layer.
         self.conv_layers = conv_layers
         # Number of neurons in each dense layer.
@@ -199,7 +199,8 @@ class MnistTrainer:
 
         # Flatten the signal for the use in dense layers
         if len(self.conv_layers) > 0:
-            signal = tf.reshape(signal, [self.mb_size, self.conv_layers[-1] * (28 // (2 ** len(self.conv_layers))) ** 2])
+            signal = tf.reshape(signal,
+                                [self.mb_size, self.conv_layers[-1] * (28 // (2 ** len(self.conv_layers))) ** 2])
         else:
             signal = tf.reshape([self.mb_size, 784])
 
@@ -216,6 +217,8 @@ class MnistTrainer:
                                         kernel_initializer=w_init,
                                         bias_initializer=b_init)
             signal = cur_layer
+
+            signal = tf.layers.dropout(signal, rate=self.dropout_rate)
 
         # Apply last dense layer
         cur_layer = tf.layers.dense(inputs=signal,
@@ -324,7 +327,7 @@ class MnistTrainer:
 if __name__ == '__main__':
     trainer = MnistTrainer(
         conv_layers=[10, 20],
-        dense_layers=[128] + [10],
+        dense_layers=[64, 128] + [10],
         kernel_size=[5, 5],
         nb_epochs=100000
     )
