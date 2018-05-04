@@ -67,8 +67,8 @@ class MnistTrainer:
 
         # Apply convolution layers
         for layer_no in range(len(self.conv_layers)):
-            # Initialize weights with st. dev = sqrt(2/N
-            input_size = int(signal.get_shape()[1])
+            # Initialize weights with st. dev = sqrt(2/N)
+            input_size = int(signal.get_shape()[1]) * int(signal.get_shape()[2]) * int(signal.get_shape()[3])
             w_init = tf.initializers.random_normal(stddev=sqrt(2 / input_size))
 
             # Build convolution layer
@@ -139,13 +139,13 @@ class MnistTrainer:
 
                 # Flatten and concatenate the 10 patches to 2 dimensions for visualization.
                 if layer_no == 0:
-                    print(self.exciting_patches[layer_no][filter_no].get_shape())
+                    # print(self.exciting_patches[layer_no][filter_no].get_shape())
                     flattened_patches_shape = [1] +\
                                               [10 * self.kernel_size[0],
                                                self.kernel_size[1]] +\
                                               [1]
                 else:
-                    print(self.exciting_patches[layer_no][filter_no].get_shape())
+                    # print(self.exciting_patches[layer_no][filter_no].get_shape())
                     flattened_patches_shape = [1] +\
                                               [self.conv_layers[layer_no-1] * self.kernel_size[0],
                                                10 * self.kernel_size[1]] +\
