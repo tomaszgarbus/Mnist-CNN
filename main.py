@@ -178,7 +178,7 @@ class MnistTrainer:
                 else:
                     tmp_str = 'conv2d_%d/kernel:0' % layer_no
                 kernel = [v for v in tf.global_variables() if v.name == tmp_str][0]
-                print(kernel.get_shape())
+                # print(kernel.get_shape())
                 kernel = kernel[:, :, :, i]
                 if layer_no == 0:
                     kernel = tf.reshape(kernel, [1] + self.kernel_size + [1])
@@ -207,13 +207,14 @@ class MnistTrainer:
         # Apply dense layers with ReLU activation
         for num_neurons in self.dense_layers[:-1]:
             # Initialize weights and biases with stdev = sqrt(2/N)
+            print(signal.get_shape())
             input_size = int(signal.get_shape()[1])
             w_init = tf.initializers.random_normal(stddev=sqrt(2/input_size))
             b_init = tf.initializers.constant(0)
 
             cur_layer = tf.layers.dense(inputs=signal,
                                         units=num_neurons,
-                                        activation=tf.nn.relu,
+                                        activation=tf.nn.sigmoid,
                                         kernel_initializer=w_init,
                                         bias_initializer=b_init)
             signal = cur_layer
@@ -221,8 +222,13 @@ class MnistTrainer:
             signal = tf.layers.dropout(signal, rate=self.dropout_rate)
 
         # Apply last dense layer
+        input_size = int(signal.get_shape()[1])
+        w_init = tf.initializers.random_normal(stddev=sqrt(2 / input_size))
+        b_init = tf.initializers.constant(0)
         cur_layer = tf.layers.dense(inputs=signal,
-                                    units=self.dense_layers[-1])
+                                    units=self.dense_layers[-1],
+                                    kernel_initializer=w_init,
+                                    bias_initializer=b_init)
         signal = cur_layer
 
         self.merged_summary = tf.summary.merge_all()
@@ -274,7 +280,7 @@ class MnistTrainer:
         x_test, y_test = self.mnist.test.images, self.mnist.test.labels
         N = self.mnist.test.num_examples
 
-        # I have replaced all -1 with self.mb_size to be sure about sizes of all layers.
+        # I have replaced all -1 with self.mb_size to be sure about exact shapes of all layers.
         assert N % self.mb_size == 0,\
             "Sorry, mb_size must divide the number of images in test set"
 
@@ -327,8 +333,10 @@ class MnistTrainer:
 if __name__ == '__main__':
     trainer = MnistTrainer(
         conv_layers=[10, 20],
-        dense_layers=[64, 128] + [10],
+        dense_layers=[60, 500, 1000, 120] + [10],
         kernel_size=[5, 5],
-        nb_epochs=100000
+        nb_epochs=100000,
+        mb_size=200,
+        dropout_rate=0.6,
     )
     trainer.train_and_evaluate()
