@@ -5,11 +5,6 @@ from typing import Iterable, List
 import numpy as np
 import logging
 
-# TODO:
-# * achieve accuracy 99.1%
-# * add batch normalization (DONE)
-# * find 10 patches that excite the network the most (DONE)
-
 
 class MnistTrainer:
     def __init__(self,
@@ -55,6 +50,7 @@ class MnistTrainer:
     def create_model(self) -> None:
         self.x = tf.placeholder(tf.float32, [self.mb_size, 784], name='x')
         self.y = tf.placeholder(tf.float32, [self.mb_size, 10], name='y')
+        self.x_reshaped = tf.reshape(self.x, [self.mb_size, 28, 28, 1])
 
         # Initialize fetch handles for exciting patches and their respective responses.
         self.exciting_patches = [[None] * k for k in self.conv_layers]
@@ -63,7 +59,7 @@ class MnistTrainer:
         self.all_exciting_patches_at_layer = [None for _ in self.conv_layers]
 
         # Reshape input for convolution layers
-        signal = tf.reshape(self.x, [self.mb_size, 28, 28, 1])
+        signal = self.x_reshaped
 
         # Apply convolution layers
         for layer_no in range(len(self.conv_layers)):
@@ -85,7 +81,7 @@ class MnistTrainer:
             mb_mean = tf.reduce_mean(cur_conv_layer, axis=[0, 1, 2], keepdims=True)
             #   * Calculate variance and stdev.
             mb_variance = tf.reduce_mean(tf.multiply(cur_conv_layer-mb_mean, cur_conv_layer-mb_mean))
-            eps = tf.constant(0.001, dtype=tf.float32)
+            eps = tf.constant(0.00001, dtype=tf.float32)
             mb_stdev = tf.sqrt(mb_variance + eps)
             #   * Normalize.
             normalized_conv_layer = (cur_conv_layer - mb_mean)/mb_stdev
@@ -104,7 +100,7 @@ class MnistTrainer:
             for filter_no in range(self.conv_layers[layer_no]):
                 inp = 28 // (2**layer_no)  # Square root of input shape for current layer.
 
-                # Find top 10 responses to current filter, in the current mini-batch.
+                # Find top 10 responses to current filter.
                 single_filtered_flattened = tf.reshape(cur_conv_layer[:, :, :, filter_no],
                                                        [self.mb_size * inp * inp])
                 top10_vals, top10_indices = tf.nn.top_k(single_filtered_flattened,
@@ -115,24 +111,28 @@ class MnistTrainer:
                                            dtype=[tf.int32, tf.int32, tf.int32])
 
                 # Find patches corresponding to the top 10 responses.
-                def safe_cut_patch(a):
+                def safe_cut_patch(a, size=self.kernel_size, img=signal, paddings=1):
                     """
                     :param (sample_no, x, y)@a
                     :return: Cuts out a patch of size (convolution kernel) located at (x, y) on
                         input #sample_no in current batch.
                     """
                     sample_no, x, y = a
-                    pad_marg_x = (self.kernel_size[0] // 2) + 1 - (self.kernel_size[0] % 2)
-                    pad_marg_y = (self.kernel_size[1] // 2) + 1 - (self.kernel_size[1] % 2)
+                    pad_marg_x = 2
+                    pad_marg_y = 2
                     padding = [[0, 0],
                                [pad_marg_x, pad_marg_x],
                                [pad_marg_y, pad_marg_y],
                                [0, 0]]
-                    padded = tf.pad(signal, padding)
-                    return padded[sample_no, x:x+self.kernel_size[0], y:y+self.kernel_size[1], :]
+                    padded = tf.pad(img, padding)
+                    return padded[sample_no, x:x+size[0], y:y+size[1], :]
 
                 # Store patches and responses in class-visible array to be retrieved later.
-                self.exciting_patches[layer_no][filter_no] = tf.map_fn(safe_cut_patch,
+                self.exciting_patches[layer_no][filter_no] = tf.map_fn(lambda x: safe_cut_patch(x,
+                                                                                                size=(self.kernel_size[0] * (2 ** layer_no),
+                                                                                                      self.kernel_size[1] * (2 ** layer_no)),
+                                                                                                img=self.x_reshaped,
+                                                                                                paddings=(layer_no+1)),
                                                                        top10_reshaped,
                                                                        dtype=tf.float32)
                 self.patches_responses[layer_no][filter_no] = top10_vals
@@ -147,8 +147,8 @@ class MnistTrainer:
                 else:
                     # print(self.exciting_patches[layer_no][filter_no].get_shape())
                     flattened_patches_shape = [1] +\
-                                              [self.conv_layers[layer_no-1] * self.kernel_size[0],
-                                               10 * self.kernel_size[1]] +\
+                                              [10 * self.kernel_size[0] * (2 ** layer_no),
+                                               self.kernel_size[1] * (2 ** layer_no)] +\
                                               [1]
                 # Write patches to summary.
                 patch_name = "exciting_patches_filter{0}".format(filter_no)
@@ -204,7 +204,7 @@ class MnistTrainer:
         else:
             signal = tf.reshape([self.mb_size, 784])
 
-        # Apply dense layers with ReLU activation
+        # Apply dense layers with sigmoid activation
         for num_neurons in self.dense_layers[:-1]:
             # Initialize weights and biases with stdev = sqrt(2/N)
             print(signal.get_shape())
@@ -332,10 +332,10 @@ class MnistTrainer:
 
 if __name__ == '__main__':
     trainer = MnistTrainer(
-        conv_layers=[10, 20],
-        dense_layers=[60, 500, 1000, 120] + [10],
+        conv_layers=[10, 20, 20],
+        dense_layers=[64] + [10],
         kernel_size=[5, 5],
-        nb_epochs=100000,
+        nb_epochs=30000,
         mb_size=200,
         dropout_rate=0.6,
     )
